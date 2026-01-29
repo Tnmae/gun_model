@@ -7,6 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import sys
+import numpy as np
 
 # Add <project_root>/src to Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -20,6 +21,23 @@ from PIL import Image
 
 logger = logging.getLogger("gun-detection")
 logger.setLevel(logging.INFO)
+
+
+def base64_to_cv2(b64_string):
+    # Remove header if present
+    if "," in b64_string:
+        b64_string = b64_string.split(",")[1]
+
+    # Decode base64 to bytes
+    img_bytes = base64.b64decode(b64_string)
+
+    # Convert bytes to numpy array
+    np_arr = np.frombuffer(img_bytes, dtype=np.uint8)
+
+    # Decode image
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+    return img
 
 
 # ---------------------------------------------------------
@@ -110,12 +128,6 @@ def run_gun_detection_detection(client_id: str, video_url: str, camera_id: int, 
             ws = sessions[client_id]["ws"]
 
             if result and result.get('annotated_frame'):
-                # success, buffer = cv2.imencode(".jpg", result.get('annotated_frame'))
-                # if not success:
-                #     continue
-
-                # clean_result = dict(result)
-                # clean_result.pop("annotated_frame", None)
 
                 payload = {
                    "detections": result,

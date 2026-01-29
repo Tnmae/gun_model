@@ -1,10 +1,9 @@
-
 import os
 import logging
 from psycopg2.pool import SimpleConnectionPool
 from dotenv import load_dotenv
 import json
-import logging
+from datetime import datetime  # ← ADD THIS IMPORT
 
 load_dotenv()
 logger = logging.getLogger("detection")
@@ -29,17 +28,10 @@ except Exception as e:
     raise
 
 
-
-
-logger = logging.getLogger("detection")
-
-
 def insert_data(d, s3_url):
     """
     Insert gun detection data into gun_detections table
-    STRICTLY follows the latest response structure
     """
-
     conn = None
     try:
         conn = pool.getconn()
@@ -62,23 +54,37 @@ def insert_data(d, s3_url):
                 %s::jsonb,
                 %s::jsonb,
                 %s::jsonb,
-                %s, %s,%s
+                %s, %s, %s
             )
             RETURNING id;
         """
 
+        # Get timestamp from detection response
+        timestamp_str = d.get("timestamp")
+        
+        if timestamp_str:
+            # Parse ISO format timestamp from detection
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            except Exception:
+                # Fallback if parse fails
+                timestamp = datetime.utcnow()
+        else:
+            # Fallback if timestamp missing
+            timestamp = datetime.utcnow()
+
         cursor.execute(
             insert_query,
             (
-                d["cam_id"],                       # int
-                d["org_id"],                       # int
-                d["user_id"],                      # int
-                json.dumps(d["persons_present"]),  # jsonb
-                json.dumps(d["guns"]),             # jsonb
-                json.dumps(d["gun_holders"]),      # jsonb
-                s3_url,                            # text
-                d["status"] ,
-                d["time_stamp"]
+                d.get("cam_id", -1),
+                d.get("org_id", -1),
+                d.get("user_id", -1),
+                json.dumps(d.get("persons_present", [])),
+                json.dumps(d.get("guns", [])),
+                json.dumps(d.get("gun_holders", [])),
+                s3_url,
+                d.get("status", 0),
+                timestamp
             )
         )
 
@@ -87,7 +93,10 @@ def insert_data(d, s3_url):
         cursor.close()
 
         logger.info(
-            f"✅ Gun detection inserted | cam_id={d['cam_id']} | id={inserted_id}"
+            f"✅ Gun detection inserted | cam_id={d.get('cam_id')} | "
+            f"org_id={d.get('org_id')} | id={inserted_id} | "
+            f"guns={len(d.get('guns', []))} | alerts={len(d.get('alerts', []))} | "
+            f"timestamp={timestamp_str}"
         )
         return True
 
@@ -95,6 +104,7 @@ def insert_data(d, s3_url):
         if conn:
             conn.rollback()
         logger.error(f"❌ DB insert failed: {e}")
+        logger.error(f"   Data keys available: {list(d.keys())}")
         return False
 
     finally:

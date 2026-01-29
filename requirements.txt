@@ -1,10 +1,10 @@
 ##############################################
 # PyTorch (CUDA 12.1) – INSTALL SEPARATELY
 ##############################################
-# ⚠️ Do NOT uncomment these here.
-# Install manually using:
+# ⚠️ Install manually FIRST using:
 # python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 #
+# This installs:
 # torch==2.5.1+cu121
 # torchvision==0.20.1+cu121
 # torchaudio==2.5.1+cu121
@@ -15,17 +15,19 @@
 ##############################################
 ultralytics>=8.1.0
 numpy>=1.23
-opencv-python>=4.8          # use opencv-python (NOT headless) for local + video
+opencv-python>=4.8          # NOT opencv-python-headless
 Pillow>=10.0.0
 PyYAML>=6.0
 tqdm>=4.64.0
 typing-extensions>=4.0
+scipy>=1.7
 
 
 ##############################################
-# Tracking (DeepSort)
+# Tracking & ReID
 ##############################################
 deep-sort-realtime>=1.3.2
+torchreid>=1.4.0
 
 
 ##############################################
@@ -50,13 +52,3 @@ botocore==1.34.90
 # Dev / Debug Tools
 ##############################################
 flake8>=7.0
-
-
-ultralytics>=8.0.0
-torch>=1.12
-torchvision>=0.13
-opencv-python>=4.6
-numpy>=1.21
-scipy>=1.7
-deep-sort-realtime>=1.3.2
-torchreid>=1.4.0
