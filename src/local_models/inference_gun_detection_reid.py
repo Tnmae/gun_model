@@ -45,7 +45,7 @@ import os
 import json
 import base64
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -67,7 +67,7 @@ DEFAULTS = {
     # Gun detection models (ensemble)
     "GUN_MODELS": [
         {
-            "path": "E:\All_models\gun_detection\gun_dd_f_best.pt",
+            "path": r"E:\All_models\gun_detection\gun_dd_f_best.pt",
             "weight": 1.0,
             "conf": 0.70,
             "name": "gun-70k-detector",
@@ -75,7 +75,7 @@ DEFAULTS = {
             "target_class_id": 0
         },
         {
-            "path": "E:\All_models\gun_detection\gunn2.pt",
+            "path": r"E:\All_models\gun_detection\gunn2.pt",
             "weight": 0.9,
             "conf": 0.7,
             "name": "gun-knife-detector",
@@ -94,7 +94,7 @@ DEFAULTS = {
     },
     
     # Pose detection
-    "POSE_MODEL_PATH": "E:\All_models\gun_detection\yolov8x-pose.pt",
+    "POSE_MODEL_PATH": r"E:\All_models\gun_detection\yolov8x-pose.pt",
     "CONF_THR_POSE": 0.25,
     "CONF_THR_WRIST": 0.20,
     
@@ -145,7 +145,7 @@ LEFT_WRI, RIGHT_WRI = 9, 10
 def log(msg: str, verbose: bool = True):
     if not verbose:
         return
-    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     print(f"[{ts}] {msg}", flush=True)
 
 # ---------------- Geometry helpers ----------------
@@ -269,6 +269,9 @@ class AlertManager:
         Returns:
             (should_alert: bool, alert_level: str)
         """
+        # Ensure track_id is int
+        track_id = int(track_id)
+        
         # Determine alert level based on confidence
         if confidence >= self.config["CRITICAL_THRESHOLD"]:
             alert_level = "CRITICAL"
@@ -331,6 +334,7 @@ class AlertManager:
     
     def get_alert_stats(self, track_id: int) -> Dict[str, Any]:
         """Get alert statistics for a track_id"""
+        track_id = int(track_id)
         if track_id in self.alert_history:
             history = self.alert_history[track_id]
             return {
@@ -359,6 +363,9 @@ class GunHolderMemory:
         Returns:
             is_new_armed: True if this is the first time seeing this person armed
         """
+        # Ensure track_id is int
+        track_id = int(track_id)
+        
         is_new = track_id not in self.gun_holders
         
         if is_new:
@@ -416,10 +423,11 @@ class GunHolderMemory:
     
     def is_armed(self, track_id: int) -> bool:
         """Check if a track_id is currently considered armed"""
-        return track_id in self.gun_holders
+        return int(track_id) in self.gun_holders
     
     def get_status(self, track_id: int) -> Dict[str, Any]:
         """Get detailed status for a track_id"""
+        track_id = int(track_id)
         if track_id in self.gun_holders:
             holder = self.gun_holders[track_id]
             return {
@@ -433,8 +441,8 @@ class GunHolderMemory:
         return {'armed': False}
     
     def get_all_armed(self) -> List[int]:
-        """Get all currently armed track_ids"""
-        return list(self.gun_holders.keys())
+        """Get all currently armed track_ids as integers"""
+        return [int(tid) for tid in self.gun_holders.keys()]
     
     def advance_frame(self):
         """Call at the start of each new frame"""
@@ -661,8 +669,6 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
     """
     Run single-frame inference with persistent tracking and smart alerts
     """
-    from datetime import datetime  # Add at top of function
-    
     pose_model = model["pose_model"]
     tracker = model["tracker"]
     verifier = model["verifier"]
@@ -679,7 +685,7 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
     frame_number = input_data.get("frame_number", 0)
     
     # Generate timestamp for this detection
-    timestamp = datetime.utcnow().isoformat() + 'Z'  # ISO format with UTC marker
+    timestamp = datetime.now(timezone.utc).isoformat()
     
     try:
         h, w = frame.shape[:2]
@@ -740,13 +746,13 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
                     best_i = i
             
             if best_i >= 0 and best_iou >= 0.3:
-                aligned_kpts_for_tracks[t.track_id] = (
+                aligned_kpts_for_tracks[int(t.track_id)] = (
                     kpts[best_i] if len(kpts) > best_i else None
                 )
             else:
-                aligned_kpts_for_tracks[t.track_id] = None
+                aligned_kpts_for_tracks[int(t.track_id)] = None
         
-        # Build person list with track IDs
+        # Build person list with track IDs (FORCE TO INT)
         for t in tracks:
             if not t.is_confirmed() or t.time_since_update > 1:
                 continue
@@ -758,7 +764,8 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
                 h_track < cfg["MIN_PERSON_HEIGHT"]):
                 continue
             
-            persons.append([l, t_, r, b, t.track_id])
+            # ✅ CRITICAL FIX: Force track_id to int
+            persons.append([l, t_, r, b, int(t.track_id)])
         
         aligned_kpts_list = [
             aligned_kpts_for_tracks.get(p[4], None) for p in persons
@@ -828,6 +835,9 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
             if holder_id is None:
                 continue
             
+            # ✅ CRITICAL FIX: Force holder_id to int
+            holder_id = int(holder_id)
+            
             # Final confidence check
             if score >= cfg["FINAL_CONFIDENCE_THRESHOLD"]:
                 # Update persistent memory and check if this is new
@@ -844,7 +854,7 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
                 )
                 
                 current_frame_detections.append({
-                    "track_id": holder_id,
+                    "track_id": int(holder_id),  # ✅ Force to int
                     "bbox": [int(x) for x in box],
                     "score": float(score),
                     "alert": should_alert,
@@ -855,16 +865,16 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
                 # Add to alerts list if needed
                 if should_alert:
                     alerts_to_send.append({
-                        "track_id": holder_id,
+                        "track_id": int(holder_id),  # ✅ Force to int
                         "level": final_level,
                         "confidence": float(score),
                         "bbox": [int(x) for x in box],
                         "first_detection": is_new_armed,
                         "frame_number": frame_number,
-                        "timestamp": timestamp  # ← Add timestamp to alerts
+                        "timestamp": timestamp
                     })
         
-        # Get all currently armed persons (including memory)
+        # Get all currently armed persons (including memory) - already returns ints
         all_armed_ids = gun_holder_memory.get_all_armed()
         
         # ---- Prepare annotated frame ----
@@ -981,7 +991,7 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
         guns_out = []
         for det in current_frame_detections:
             guns_out.append({
-                "track_id": det["track_id"],
+                "track_id": int(det["track_id"]),  # ✅ Force to int
                 "bbox": det["bbox"],
                 "score": det["score"],
                 "alert": det["alert"],
@@ -995,10 +1005,10 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
             "org_id": org_id,
             "user_id": user_id,
             "frame_number": frame_number,
-            "timestamp": timestamp,  # ← ADDED
+            "timestamp": timestamp,
             "guns": guns_out,
-            "gun_holders": all_armed_ids,
-            "persons_present": [p[4] for p in persons],
+            "gun_holders": all_armed_ids,  # Already ints
+            "persons_present": [int(p[4]) for p in persons],  # ✅ Force to int
             "alerts": alerts_to_send,
             "annotated_frame": b64_out,
             "stats": stats,
@@ -1012,7 +1022,7 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
             "org_id": org_id,
             "user_id": user_id,
             "frame_number": frame_number,
-            "timestamp": timestamp,  # ← ADDED
+            "timestamp": timestamp,
             "guns": [],
             "gun_holders": [],
             "persons_present": [],
@@ -1022,7 +1032,7 @@ def predict_frame_fn(input_data: Dict[str, Any], model: Dict[str, Any]) -> Dict[
             "status": 1,
             "error": str(e)
         }
-        
+
 def output_frame_fn(prediction: Dict[str, Any]) -> Dict[str, Any]:
     """
     Final formatting for client response
@@ -1032,7 +1042,7 @@ def output_frame_fn(prediction: Dict[str, Any]) -> Dict[str, Any]:
         "org_id": prediction.get("org_id", -1),
         "user_id": prediction.get("user_id", -1),
         "frame_number": prediction.get("frame_number", 0),
-        "timestamp": prediction.get("timestamp", ""),  # ← ADDED
+        "timestamp": prediction.get("timestamp", ""),
         "guns": prediction.get("guns", []),
         "gun_holders": prediction.get("gun_holders", []),
         "persons_present": prediction.get("persons_present", []),
@@ -1041,6 +1051,7 @@ def output_frame_fn(prediction: Dict[str, Any]) -> Dict[str, Any]:
         "stats": prediction.get("stats", {}),
         "status": prediction.get("status", 0)
     }
+
 # ---------------- Video processing helper ----------------
 def process_video(video_path: str, 
                   output_path: str = "output.mp4",
@@ -1157,9 +1168,9 @@ def process_video(video_path: str,
 if __name__ == "__main__":
     # Process your video with smart alerts
     summary = process_video(
-        video_path='E:\All_models\gun_detection\guntest1.mp4',
-        output_path='E:\All_models\gun_detection\output_annotated.mp4',
-        max_frames=None   # Process all frames
+        video_path=r'E:\All_models\gun_detection\guntest1.mp4',
+        output_path=r'E:\All_models\gun_detection\output_annotated.mp4',
+        max_frames=None
     )
 
     print("\n✅ Done!")
@@ -1169,270 +1180,3 @@ if __name__ == "__main__":
     print(f"Total alerts: {summary['total_alerts']}")
     print(f"  HIGH: {summary['alerts_by_level']['HIGH']}")
     print(f"  CRITICAL: {summary['alerts_by_level']['CRITICAL']}")
-"""    
-Updated entry point for gun detection with persistent tracking and smart alerts.
-Compatible with inference_gun_detection_reid.py
-"""
-
-import cv2
-import base64
-import numpy as np
-from typing import Dict, Any
-
-# Import the functions from your main inference file
-from inference_gun_detection_reid import (
-    model_fn,
-    input_frame_fn,
-    predict_frame_fn,
-    output_frame_fn
-)
-
-# ===================== CONFIGURATION =====================
-VIDEO_PATH = r"E:\All_models\gun_detection\guntest1.mp4"
-
-# Optional: Override default settings
-CONFIG_OVERRIDES = {
-    "VERBOSE": True,
-    "ALERT_ON_FIRST_DETECTION_ONLY": True,  # Only alert on first detection per person
-    "GUN_HOLDER_MEMORY_FRAMES": 150,  # 5 seconds @ 30fps
-    "CRITICAL_THRESHOLD": 0.85,
-    "HIGH_THRESHOLD": 0.65,
-}
-
-# ===================== HELPER FUNCTIONS =====================
-def _decode_b64_image(b64_str: str) -> np.ndarray:
-    """Decode base64 string to OpenCV image"""
-    if b64_str.startswith("data:"):
-        b64_str = b64_str.split(",", 1)[1]
-    decoded = base64.b64decode(b64_str)
-    arr = np.frombuffer(decoded, dtype=np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-def _print_frame_summary(result: Dict[str, Any]):
-    """Print concise summary of detection results"""
-    frame_num = result.get("frame_number", 0)
-    guns = result.get("guns", [])
-    gun_holders = result.get("gun_holders", [])
-    alerts = result.get("alerts", [])
-    stats = result.get("stats", {})
-    
-    # Print frame info
-    print(f"\rFrame {frame_num:4d} | ", end="")
-    print(f"Armed: {len(gun_holders):2d} | ", end="")
-    print(f"Detections: {len(guns):2d} | ", end="")
-    print(f"Alerts: {len(alerts):2d}", end="")
-    
-    # Print alert details if any
-    if alerts:
-        print()  # New line for alerts
-        for alert in alerts:
-            level = alert.get("level", "HIGH")
-            track_id = alert.get("track_id", -1)
-            confidence = alert.get("confidence", 0.0)
-            is_first = alert.get("first_detection", False)
-            
-            icon = "🚨" if level == "CRITICAL" else "⚠️"
-            status = "NEW" if is_first else "UPDATE"
-            print(f"  {icon} {level} ALERT - ID:{track_id} ({confidence:.2f}) [{status}]")
-    
-    # Flush output
-    print("", end="", flush=True)
-
-# ===================== ENTRY POINTS =====================
-
-# Initialize model once (persistent across frames for tracking)
-_MODEL = model_fn(CONFIG_OVERRIDES)
-_FRAME_COUNTER = 0
-
-def run_inference(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Process single frame with persistent tracking.
-    
-    Args:
-        payload: Dict with keys:
-            - encoding: base64 encoded JPEG
-            - cam_id: camera ID (optional)
-            - org_id: organization ID (optional)
-            - user_id: user ID (optional)
-            - frame_number: frame number for tracking (auto-assigned if missing)
-    
-    Returns:
-        Dict with detection results including alerts
-    """
-    global _FRAME_COUNTER
-    
-    # Assign frame number if not provided
-    if "frame_number" not in payload:
-        payload["frame_number"] = _FRAME_COUNTER
-        _FRAME_COUNTER += 1
-    
-    # Parse input
-    input_data = input_frame_fn(payload, content_type="application/json")
-    
-    # Run detection
-    prediction = predict_frame_fn(input_data, _MODEL)
-    
-    # Format output
-    return output_frame_fn(prediction)
-
-def live_inference(video_path: str, show_stats: bool = True):
-    """
-    Process video stream with persistent tracking and display results.
-    
-    Args:
-        video_path: Path to video file or camera index (0 for webcam)
-        show_stats: Print frame statistics to console
-    """
-    global _FRAME_COUNTER
-    _FRAME_COUNTER = 0  # Reset counter for new video
-    
-    # Reset model state for new video
-    _MODEL["gun_holder_memory"].reset()
-    _MODEL["alert_manager"].reset()
-    
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print(f"❌ Failed to open video: {video_path}")
-        return
-    
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    print(f"🎥 Processing video: {total_frames} frames @ {fps:.1f} FPS")
-    print(f"📊 Alert mode: {'First detection only' if CONFIG_OVERRIDES.get('ALERT_ON_FIRST_DETECTION_ONLY') else 'With cooldown'}")
-    print(f"💾 Memory duration: {CONFIG_OVERRIDES.get('GUN_HOLDER_MEMORY_FRAMES', 150) / fps:.1f} seconds")
-    print("\nPress 'q' to quit, 'p' to pause/resume\n")
-    
-    paused = False
-    
-    while cap.isOpened():
-        if not paused:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            # Encode frame
-            _, buf = cv2.imencode(".jpg", frame)
-            b64_frame = base64.b64encode(buf).decode()
-            
-            # Build payload
-            payload = {
-                "cam_id": 1,
-                "org_id": 1,
-                "user_id": 1,
-                "encoding": b64_frame,
-                "frame_number": _FRAME_COUNTER
-            }
-            
-            # Run inference
-            result = run_inference(payload)
-            
-            # Print stats if enabled
-            if show_stats:
-                _print_frame_summary(result)
-            
-            # Decode annotated frame
-            img = _decode_b64_image(result["annotated_frame"])
-            
-            # Add overlay with persistent tracking info
-            h, w = img.shape[:2]
-            overlay = img.copy()
-            
-            # Info panel
-            stats = result.get("stats", {})
-            armed_count = stats.get("persistent_armed_persons", 0)
-            armed_ids = stats.get("armed_ids", [])
-            
-            info_lines = [
-                f"Frame: {_FRAME_COUNTER}/{total_frames}",
-                f"Armed: {armed_count} persons",
-                f"IDs: {armed_ids}" if armed_ids else "IDs: []"
-            ]
-            
-            y_offset = 60
-            for line in info_lines:
-                cv2.putText(overlay, line, (10, y_offset),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                y_offset += 25
-            
-            # Blend overlay
-            img = cv2.addWeighted(img, 0.7, overlay, 0.3, 0)
-        
-        # Display
-        cv2.imshow("Gun Detection - Persistent Tracking", img)
-        
-        # Handle keyboard input
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            break
-        elif key == ord("p"):
-            paused = not paused
-            print(f"\n{'⏸️  PAUSED' if paused else '▶️  RESUMED'}")
-    
-    cap.release()
-    cv2.destroyAllWindows()
-    
-    # Print final summary
-    print("\n\n" + "="*60)
-    print("📊 SESSION SUMMARY")
-    print("="*60)
-    gun_memory = _MODEL["gun_holder_memory"]
-    all_armed = gun_memory.get_all_armed()
-    
-    print(f"Total frames processed: {_FRAME_COUNTER}")
-    print(f"Currently armed persons: {len(all_armed)}")
-    
-    if all_armed:
-        print("\nArmed person details:")
-        for track_id in all_armed:
-            status = gun_memory.get_status(track_id)
-            print(f"  ID {track_id:3d}: conf={status['confidence']:.2f}, "
-                  f"detections={status['total_detections']}, "
-                  f"tracked={status['frames_tracked']} frames")
-    
-    print("="*60)
-
-def batch_inference(video_path: str, output_path: str = None):
-    """
-    Process entire video and save annotated output.
-    
-    Args:
-        video_path: Input video path
-        output_path: Output video path (optional)
-    """
-    from inference_gun_detection_reid import process_video
-    
-    if output_path is None:
-        output_path = video_path.replace(".mp4", "_annotated.mp4")
-    
-    summary = process_video(
-        video_path=video_path,
-        output_path=output_path,
-        config_overrides=CONFIG_OVERRIDES
-    )
-    
-    print("\n" + "="*60)
-    print("✅ BATCH PROCESSING COMPLETE")
-    print("="*60)
-    print(f"Input:  {video_path}")
-    print(f"Output: {output_path}")
-    print(f"\nFrames processed: {summary['total_frames']}")
-    print(f"Gun detections: {summary['total_gun_detections']}")
-    print(f"Unique armed persons: {summary['unique_armed_persons']}")
-    print(f"Total alerts: {summary['total_alerts']}")
-    print(f"  - HIGH: {summary['alerts_by_level']['HIGH']}")
-    print(f"  - CRITICAL: {summary['alerts_by_level']['CRITICAL']}")
-    print("="*60)
-
-# ===================== MAIN =====================
-if __name__ == "__main__":
-    # Choose processing mode:
-    
-    # Option 1: Live inference with display (recommended for testing)
-    live_inference(VIDEO_PATH, show_stats=True)
-    
-    # Option 2: Batch processing (faster, no display)
-    # batch_inference(
-    #     video_path=VIDEO_PATH,
-    #     output_path=r"E:\All_models\gun_detection\output_persistent.mp4"
-    # )by_level']['CRITICAL']}")
