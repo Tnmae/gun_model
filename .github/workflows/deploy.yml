@@ -24,6 +24,7 @@ jobs:
               git clone https://github.com/uctconsulting12/gun_model.git ~/gun_model
             else
               cd ~/gun_model
+              git stash
               git pull origin main
             fi
 
