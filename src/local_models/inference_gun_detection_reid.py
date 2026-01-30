@@ -67,7 +67,7 @@ DEFAULTS = {
     # Gun detection models (ensemble)
     "GUN_MODELS": [
         {
-            "path": r"E:\All_models\gun_detection\gun_dd_f_best.pt",
+            "path": r"gun_detection\gun_dd_f_best.pt",
             "weight": 1.0,
             "conf": 0.70,
             "name": "gun-70k-detector",
@@ -75,7 +75,7 @@ DEFAULTS = {
             "target_class_id": 0
         },
         {
-            "path": r"E:\All_models\gun_detection\gunn2.pt",
+            "path": r"gun_detection\gunn2.pt",
             "weight": 0.9,
             "conf": 0.7,
             "name": "gun-knife-detector",
@@ -86,7 +86,7 @@ DEFAULTS = {
     
     # Non-weapon verification model
     "NON_WEAPON_MODEL": {
-        "path": r"E:\All_models\gun_detection\non_weapons.pt",
+        "path": r"gun_detection\non_weapons.pt",
         "conf": 0.40,
         "rejection_threshold": 0.40,
         "name": "non-weapon-verifier",
@@ -94,7 +94,7 @@ DEFAULTS = {
     },
     
     # Pose detection
-    "POSE_MODEL_PATH": r"E:\All_models\gun_detection\yolov8x-pose.pt",
+    "POSE_MODEL_PATH": r"gun_detection\yolov8x-pose.pt",
     "CONF_THR_POSE": 0.25,
     "CONF_THR_WRIST": 0.20,
     
@@ -1168,8 +1168,8 @@ def process_video(video_path: str,
 if __name__ == "__main__":
     # Process your video with smart alerts
     summary = process_video(
-        video_path=r'E:\All_models\gun_detection\guntest1.mp4',
-        output_path=r'E:\All_models\gun_detection\output_annotated.mp4',
+        video_path=r'guntest1.mp4',
+        output_path=r'output_annotated.mp4',
         max_frames=None
     )
 
