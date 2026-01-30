@@ -1180,3 +1180,4 @@ if __name__ == "__main__":
     print(f"Total alerts: {summary['total_alerts']}")
     print(f"  HIGH: {summary['alerts_by_level']['HIGH']}")
     print(f"  CRITICAL: {summary['alerts_by_level']['CRITICAL']}")
+    print("hellow")
