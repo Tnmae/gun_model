@@ -1,25 +1,46 @@
-# Use NVIDIA's PyTorch image with CUDA 12.1
+# ===============================
+# Base image: PyTorch + CUDA 12.1
+# ===============================
 FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
 
-# Install OpenCV and system deps
+# -------------------------------
+# Environment settings
+# -------------------------------
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# -------------------------------
+# System dependencies
+# -------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Set workdir
+# -------------------------------
+# App directory
+# -------------------------------
 WORKDIR /app
 
-# Copy requirements first (for Docker cache)
-COPY requirements.txt .
-
+# -------------------------------
 # Install Python dependencies
+# (cached unless requirements.txt changes)
+# -------------------------------
+COPY requirements.txt /app/requirements.txt
+
 RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install -r requirements.txt
 
-# Copy app source
-COPY . .
+# -------------------------------
+# Copy application source
+# -------------------------------
+COPY . /app
 
-# Expose port and run
+# -------------------------------
+# Runtime
+# -------------------------------
 EXPOSE 8004
+
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8004"]
