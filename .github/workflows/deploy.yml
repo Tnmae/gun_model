@@ -30,7 +30,7 @@ jobs:
 
             echo "---- Building Docker image ----"
             cd ~/gun_model
-            sudo docker build -t gun_image .
+            sudo docker build --no-cache -t gun_image .
             echo "--- remove none images ------"
             sudo docker image prune -f
 
