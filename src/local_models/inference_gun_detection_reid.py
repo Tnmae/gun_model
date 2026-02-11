@@ -67,17 +67,17 @@ DEFAULTS = {
     # Gun detection models (ensemble)
     "GUN_MODELS": [
         {
-            "path": r"gun_detection\gun_dd_f_best.pt",
+            "path": r"gun_dd_f_best.pt",
             "weight": 1.0,
-            "conf": 0.70,
+            "conf": 0.6,
             "name": "gun-70k-detector",
             "classes": ["gun"],
             "target_class_id": 0
         },
         {
-            "path": r"gun_detection\gunn2.pt",
+            "path": r"gunn2.pt",
             "weight": 0.9,
-            "conf": 0.7,
+            "conf": 0.6,
             "name": "gun-knife-detector",
             "classes": ["gun", "knife"],
             "target_class_id": 0
@@ -86,23 +86,23 @@ DEFAULTS = {
     
     # Non-weapon verification model
     "NON_WEAPON_MODEL": {
-        "path": r"gun_detection\non_weapons.pt",
-        "conf": 0.40,
-        "rejection_threshold": 0.40,
+        "path": r"non_weapons.pt",
+        "conf": 0.35,
+        "rejection_threshold": 0.35,
         "name": "non-weapon-verifier",
         "classes": ["Gun", "Knife", "non_weapon"]
     },
     
     # Pose detection
-    "POSE_MODEL_PATH": r"gun_detection\yolov8x-pose.pt",
-    "CONF_THR_POSE": 0.25,
-    "CONF_THR_WRIST": 0.20,
+    "POSE_MODEL_PATH": r"yolov8x-pose.pt",
+    "CONF_THR_POSE": 0.45,
+    "CONF_THR_WRIST": 0.45,
     
     # Ensemble configuration
     "ENSEMBLE_METHOD": "weighted_boxes",
     "WBF_IOU_THR": 0.5,
     "AGREEMENT_BONUS": 0.25,
-    "FINAL_CONFIDENCE_THRESHOLD": 0.65,
+    "FINAL_CONFIDENCE_THRESHOLD": 0.6,
     "CRITICAL_THRESHOLD": 0.85,
     "HIGH_THRESHOLD": 0.65,
     
@@ -1168,8 +1168,8 @@ def process_video(video_path: str,
 if __name__ == "__main__":
     # Process your video with smart alerts
     summary = process_video(
-        video_path=r'guntest1.mp4',
-        output_path=r'output_annotated.mp4',
+        video_path=r'E:\All_models\gun_detection\guntest1.mp4',
+        output_path=r'E:\All_models\gun_detection\output_annotated.mp4',
         max_frames=None
     )
 
