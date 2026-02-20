@@ -40,7 +40,7 @@ DEFAULTS = {
     # Gun detection models (ensemble)
     "GUN_MODELS": [
         {
-            "path": r"E:\All_models\gun_detection\gun_dd_f_best.pt",
+            "path": r"gun_dd_f_best.pt",
             "weight": 1.0,
             "conf": 0.6,
             "name": "gun-70k-detector",
@@ -48,7 +48,7 @@ DEFAULTS = {
             "target_class_id": 0
         },
         {
-            "path": r"E:\All_models\gun_detection\gunn2.pt",
+            "path": r"gunn2.pt",
             "weight": 0.9,
             "conf": 0.6,
             "name": "gun-knife-detector",
@@ -59,7 +59,7 @@ DEFAULTS = {
 
     # Non-weapon verification model
     "NON_WEAPON_MODEL": {
-        "path": r"E:\All_models\gun_detection\non_weapons.pt",
+        "path": r"non_weapons.pt",
         "conf": 0.35,
         "rejection_threshold": 0.35,
         "name": "non-weapon-verifier",
@@ -1110,8 +1110,8 @@ def process_video(video_path: str,
 # ---------------- Main ----------------
 if __name__ == "__main__":
     summary = process_video(
-        video_path=r'E:\All_models\gun_detection\HORRIFIC_Body_Cam_Shows_Police_View_of_Uvalde_School_Shooting_480P.mp4',
-        output_path=r'E:\All_models\gun_detection\output_annotateddd2.mp4',
+        video_path=r'HORRIFIC_Body_Cam_Shows_Police_View_of_Uvalde_School_Shooting_480P.mp4',
+        output_path=r'output_annotateddd2.mp4',
         max_frames=None
     )
 
