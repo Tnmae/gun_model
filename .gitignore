@@ -12,6 +12,8 @@ main.py
 handler
 datasets
 yolov8x-pose.pt
+yolo26x-pose.pt
+yolo11x-pose.pt
 gun_dd_f_best.pt
 HORRIFIC_Body_Cam_Shows_Police_View_of_Uvalde_School_Shooting_480P.mp4
 Nashville_Shooting_911_Calls_Released_From_Inside_School_720P.mp4
