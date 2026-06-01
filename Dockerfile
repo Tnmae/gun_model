@@ -1,5 +1,7 @@
 # ===============================
 # Base image: PyTorch + CUDA 12.1
+# TensorRT is included via pytorch/pytorch CUDA image +
+# nvidia-tensorrt installed below.
 # ===============================
 FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
 
@@ -31,12 +33,21 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+    && pip install -r requirements.txt \
+    && pip install tensorrt
 
 # -------------------------------
 # Copy application source
 # -------------------------------
 COPY . /app
+
+# -------------------------------
+# Convert models to TensorRT engines at build time.
+# This bakes the .engine files into the image so the
+# server starts instantly without a warm-up conversion.
+# Skip if .engine files are already present (COPY above).
+# -------------------------------
+RUN python convert_to_tensorrt.py || echo "[WARN] TRT conversion skipped (no GPU at build time — run manually)"
 
 # -------------------------------
 # Runtime

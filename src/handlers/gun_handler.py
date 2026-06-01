@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from fastapi import WebSocket, WebSocketDisconnect
 from src.utils.kvs_stream import get_kvs_hls_url
 
@@ -52,7 +53,19 @@ async def gun_websocket_handler(executor, storage_executor, ws: WebSocket, clien
                     org_id = data["org_id"]
                     region = data.get("region", "ap-south-1")
 
-                    kvs_url = stream_name if stream_name.startswith("https") else get_kvs_hls_url(stream_name, region)   # replace the kvs stream urrl
+                    # Pass the stream_name directly to cv2.VideoCapture when it is:
+                    #   - an absolute/relative file path  (local video file)
+                    #   - an rtsp:// or http:// URL       (IP camera / HLS direct)
+                    #   - an https:// URL                 (HLS CDN)
+                    # Only call get_kvs_hls_url() for bare KVS stream names.
+                    _direct = (
+                        stream_name.startswith("https://")
+                        or stream_name.startswith("http://")
+                        or stream_name.startswith("rtsp://")
+                        or stream_name.startswith("rtsps://")
+                        or os.path.exists(stream_name)   # local file
+                    )
+                    kvs_url = stream_name if _direct else get_kvs_hls_url(stream_name, region)
                     
                     # --------- Handle missing/invalid KVS URL gracefully ----------
                     if not kvs_url or kvs_url in ("None", "", None):

@@ -1,12 +1,7 @@
-from fastapi import FastAPI, WebSocket,File, UploadFile, Form, HTTPException
-
+from fastapi import FastAPI, WebSocket
 from src.websocket.gun_detection_websocket import run_gun_detection_detection
-
 from src.handlers.gun_handler import gun_websocket_handler
-
 from fastapi.middleware.cors import CORSMiddleware
-
-
 from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()

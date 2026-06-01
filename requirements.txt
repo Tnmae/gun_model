@@ -8,8 +8,10 @@
 
 ##############################################
 # Ultralytics YOLO (Core)
+# TensorRT export is handled by ultralytics built-in .export(format="engine")
+# TensorRT itself is provided by the CUDA Docker base image or nvidia-tensorrt
 ##############################################
-ultralytics>=8.1.0
+ultralytics>=8.3.0
 numpy>=1.23
 opencv-python>=4.8
 Pillow>=10.0.0

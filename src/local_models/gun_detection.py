@@ -40,27 +40,31 @@ except ImportError:
 # ===================== CONFIGURATION =====================
 CONFIG_OVERRIDES = {
     "VERBOSE": False,  # Set False for production (less console spam)
-    
+
     # Alert behavior
     "ALERT_ON_FIRST_DETECTION_ONLY": True,  # Only alert once per person
-    "ALERT_COOLDOWN_FRAMES": 90,  # 3 seconds @ 30fps (if not first-only)
-    "ALERT_ON_CONFIDENCE_INCREASE": False,
-    "CONFIDENCE_JUMP_THRESHOLD": 0.15,
-    
-    # Memory persistence
-    "GUN_HOLDER_MEMORY_FRAMES": 150,  # 5 seconds @ 30fps
-    "GUN_HOLDER_DECAY_CONFIDENCE": True,
-    "CONFIDENCE_DECAY_RATE": 0.02,
-    "MIN_PERSISTENT_CONFIDENCE": 0.40,
-    
+    "ALERT_COOLDOWN_FRAMES": 90,            # 3 seconds @ 30fps (if not first-only)
+
     # Detection thresholds
-    "CRITICAL_THRESHOLD": 0.85,  # Red/Critical alerts
-    "HIGH_THRESHOLD": 0.65,       # Orange/High alerts
+    "CRITICAL_THRESHOLD": 0.85,             # Red/Critical alerts
+    "HIGH_THRESHOLD": 0.65,                 # Orange/High alerts
     "FINAL_CONFIDENCE_THRESHOLD": 0.65,
-    
+
     # Model confidence
     "CONF_THR_POSE": 0.25,
     "CONF_THR_WRIST": 0.20,
+
+    # Parallel inference workers (pose + gun run concurrently, OSNet disabled)
+    "INFERENCE_WORKERS": 2,
+
+    # Gun model frame-skip: 1 = disabled (every frame)
+    "GUN_SKIP_FRAMES": 1,
+
+    # Gun inference input size (480 = ~30% faster than 640, dynamic engine)
+    "GUN_INFER_IMGSZ": 480,
+
+    # OSNet ReID disabled — saves ~35ms/frame, IoU-only DeepSort tracking
+    "USE_OSNET": False,
 }
 
 # ===================== PER-CAMERA TRACKING MANAGER =====================
@@ -102,8 +106,11 @@ class CameraTracker:
         with self.lock:
             if cam_id in self.cameras:
                 camera_state = self.cameras[cam_id]
-                camera_state["model"]["gun_holder_memory"].reset()
-                camera_state["model"]["alert_manager"].reset()
+                model = camera_state["model"]
+                # Reset alert manager and gun tracker (correct model dict keys)
+                model["alerts"].reset()
+                model["gun_tracker"].reset()
+                model["id_mapper"].reset()
                 camera_state["frame_counter"] = 0
                 print(f"[CameraTracker] ✓ Reset tracking for camera {cam_id}")
     
@@ -122,15 +129,15 @@ class CameraTracker:
             
             camera_state = self.cameras[cam_id]
             model = camera_state["model"]
-            gun_memory = model["gun_holder_memory"]
-            
-            all_armed = gun_memory.get_all_armed()
+            # Use alert manager history as proxy for armed track IDs
+            alert_history = model["alerts"].history
+            armed_ids = list(alert_history.keys())
             
             return {
                 "cam_id": cam_id,
                 "total_frames": camera_state["frame_counter"],
-                "armed_count": len(all_armed),
-                "armed_ids": all_armed
+                "armed_count": len(armed_ids),
+                "armed_ids": armed_ids
             }
 
 # Global camera tracker instance
@@ -139,74 +146,89 @@ _CAMERA_TRACKER = CameraTracker()
 # ===================== MAIN INFERENCE FUNCTION =====================
 def run_inference(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Main inference function - COMPATIBLE WITH EXISTING WEBSOCKET.
-    
-    Your websocket sends:
-    {
-        "cam_id": 123,
-        "org_id": 2,
-        "user_id": 2,
-        "encoding": "<base64_jpeg>"
-    }
-    
-    This function:
-    - Auto-assigns frame_number internally per camera
-    - Maintains persistent tracking per camera
-    - Returns same format as before + new tracking features
-    
-    Returns:
-    {
-        "cam_id": 123,
-        "org_id": 2,
-        "user_id": 2,
-        "frame_number": 42,
-        "timestamp": "2026-01-28T12:34:56.789Z",
-        "guns": [...],
-        "gun_holders": [5, 7],
-        "persons_present": [5, 7, 12],
-        "alerts": [{...}],
-        "annotated_frame": "<base64_jpeg>",
-        "stats": {...},
-        "status": 0
-    }
+    Main inference function — accepts a payload with a base64-encoded frame.
+    Used by the standalone test harness and any caller that already has base64.
+
+    Payload keys:
+        encoding     – base64 JPEG string (required)
+        cam_id       – int (optional, default 0)
+        org_id       – int (optional)
+        user_id      – int (optional)
     """
     try:
-        # Get camera ID (default to 0 if missing)
         cam_id = payload.get("cam_id", 0)
-        
-        # Get or create tracking state for this camera
         camera_state = _CAMERA_TRACKER.get_or_create(cam_id)
         model = camera_state["model"]
-        
-        # Auto-assign frame number (increments automatically per camera)
         current_frame = _CAMERA_TRACKER.increment_frame(cam_id)
         payload["frame_number"] = current_frame
-        
-        # Parse input using standard function
+
         input_data = input_frame_fn(payload, content_type="application/json")
-        
-        # Run detection with persistent tracking
         prediction = predict_frame_fn(input_data, model)
-        
-        # Format and return output (includes timestamp from predict_frame_fn)
         return output_frame_fn(prediction)
-    
+
     except Exception as e:
-        # Return error response (backward compatible)
         import traceback
         error_msg = str(e)
         print(f"[ERROR] Camera {payload.get('cam_id', -1)}: {error_msg}")
         print(traceback.format_exc())
-        
-        # Generate timestamp for error response
         timestamp = datetime.utcnow().isoformat() + 'Z'
-        
         return {
             "cam_id": payload.get("cam_id", -1),
             "org_id": payload.get("org_id", -1),
             "user_id": payload.get("user_id", -1),
             "frame_number": 0,
-            "timestamp": timestamp,  # ← ADDED
+            "timestamp": timestamp,
+            "guns": [],
+            "gun_holders": [],
+            "persons_present": [],
+            "alerts": [],
+            "annotated_frame": "",
+            "stats": {},
+            "status": 1,
+            "error": error_msg
+        }
+
+
+def run_inference_raw(frame: np.ndarray, cam_id: int, org_id: int = -1, user_id: int = -1) -> Dict[str, Any]:
+    """
+    Inference entry point for callers that already have a decoded numpy frame
+    (e.g. the websocket loop). Skips the base64 encode/decode round-trip.
+
+    Args:
+        frame:   BGR numpy array from cv2.VideoCapture
+        cam_id:  camera identifier
+        org_id:  organisation identifier
+        user_id: user identifier
+
+    Returns the same dict shape as run_inference().
+    """
+    try:
+        camera_state = _CAMERA_TRACKER.get_or_create(cam_id)
+        model = camera_state["model"]
+        current_frame = _CAMERA_TRACKER.increment_frame(cam_id)
+
+        input_data = {
+            "frame":        frame,
+            "cam_id":       cam_id,
+            "org_id":       org_id,
+            "user_id":      user_id,
+            "frame_number": current_frame,
+        }
+        prediction = predict_frame_fn(input_data, model)
+        return output_frame_fn(prediction)
+
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"[ERROR] Camera {cam_id}: {error_msg}")
+        print(traceback.format_exc())
+        timestamp = datetime.utcnow().isoformat() + 'Z'
+        return {
+            "cam_id": cam_id,
+            "org_id": org_id,
+            "user_id": user_id,
+            "frame_number": 0,
+            "timestamp": timestamp,
             "guns": [],
             "gun_holders": [],
             "persons_present": [],
@@ -263,125 +285,144 @@ def _decode_b64_image(b64_str: str) -> np.ndarray:
 
 def test_inference(video_path: str, cam_id: int = 1):
     """
-    Test function - simulates how your websocket uses run_inference.
-    Run this to verify everything works before deploying.
+    Benchmarked test using run_inference_raw() — raw numpy frames, no
+    base64 encode/decode overhead. Measures pure inference latency.
     """
-    print("="*70)
-    print("TESTING GUN DETECTION - Simulating Websocket Behavior")
-    print("="*70)
-    
+    import time
+    import statistics
+
+    print("=" * 70)
+    print("BENCHMARKED GUN DETECTION TEST")
+    print("=" * 70)
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Failed to open video: {video_path}")
+        print(f"Failed to open video: {video_path}")
         return
-    
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+    src_fps      = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    print(f"\n🎥 Video: {total_frames} frames @ {fps:.1f} FPS")
-    print(f"📹 Camera ID: {cam_id}")
-    print(f"⚙️  Alert mode: {'First detection only' if CONFIG_OVERRIDES['ALERT_ON_FIRST_DETECTION_ONLY'] else 'With cooldown'}")
-    print(f"💾 Memory: {CONFIG_OVERRIDES['GUN_HOLDER_MEMORY_FRAMES']/fps:.1f} seconds\n")
-    print("Press 'q' to quit, 's' to show stats\n")
-    
-    frame_count = 0
+
+    print(f"\n  Source video : {total_frames} frames @ {src_fps:.1f} FPS")
+    print(f"  Camera ID    : {cam_id}")
+    print(f"  Alert mode   : {'First detection only' if CONFIG_OVERRIDES['ALERT_ON_FIRST_DETECTION_ONLY'] else 'With cooldown'}")
+    print(f"  Inference    : parallel TensorRT (pose + gun), stream=True, letterbox")
+    print(f"  OSNet ReID   : {'enabled' if CONFIG_OVERRIDES.get('USE_OSNET') else 'disabled (IoU tracking)'}")
+    print(f"  INFER_IMGSZ  : {CONFIG_OVERRIDES.get('INFER_IMGSZ', 640)}px letterbox")
+    print(f"  GUN_IMGSZ    : {CONFIG_OVERRIDES.get('GUN_INFER_IMGSZ', 480)}px\n")
+    print("Press 'q' to quit early\n")
+
+    t_inference = []
+    frame_count  = 0
     total_alerts = 0
-    
+    wall_start   = time.perf_counter()
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-        
+
         frame_count += 1
-        
-        # Encode frame (EXACTLY like your websocket does)
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        base64_frame = base64.b64encode(buffer).decode('utf-8')
-        
-        # Build payload (EXACTLY like your websocket)
-        payload = {
-            "cam_id": cam_id,
-            "org_id": 1,
-            "user_id": 1,
-            "encoding": base64_frame
-            # NOTE: NO frame_number - it's auto-assigned!
-        }
-        
-        # Call run_inference (same as websocket)
-        result = run_inference(payload)
-        
-        # Check for errors
+        t0 = time.perf_counter()
+
+        # run_inference_raw — no encode/decode, direct numpy path
+        result = run_inference_raw(frame, cam_id=cam_id, org_id=1, user_id=1)
+        dt_infer = (time.perf_counter() - t0) * 1000
+        t_inference.append(dt_infer)
+
         if result.get("status", 0) != 0:
-            print(f"\n❌ Error at frame {frame_count}: {result.get('error', 'Unknown')}")
+            print(f"\nError at frame {frame_count}: {result.get('error', 'Unknown')}")
             break
-        
-        # Extract results
-        guns = result.get("guns", [])
-        gun_holders = result.get("gun_holders", [])
+
         alerts = result.get("alerts", [])
-        timestamp = result.get("timestamp", "")
         total_alerts += len(alerts)
-        
-        # Print progress
-        print(f"\r[Cam {cam_id}] Frame {result['frame_number']:4d}/{total_frames} | "
-              f"Armed: {len(gun_holders):2d} | "
-              f"Detections: {len(guns):2d} | "
-              f"Alerts: {len(alerts):2d} (Total: {total_alerts})", 
-              end="", flush=True)
-        
-        # Show alert details
         if alerts:
-            print()  # New line for alerts
+            print()
             for alert in alerts:
                 level = alert.get("level", "HIGH")
-                track_id = alert.get("track_id", -1)
-                confidence = alert.get("confidence", 0.0)
-                alert_ts = alert.get("timestamp", timestamp)
-                icon = "🚨" if level == "CRITICAL" else "⚠️"
-                print(f"  {icon} {level} ALERT - ID:{track_id} (conf: {confidence:.2f}) @ {alert_ts}")
-        
+                icon  = "CRITICAL" if level == "CRITICAL" else "HIGH"
+                print(f"  [{icon}] ALERT - ID:{alert.get('track_id')} "
+                      f"(conf: {alert.get('confidence', 0):.2f})")
+
+        live_fps = frame_count / (time.perf_counter() - wall_start)
+        print(f"\r[F{frame_count:4d}/{total_frames}] "
+              f"infer={dt_infer:6.1f}ms  "
+              f"live={live_fps:5.1f}fps  "
+              f"armed={len(result.get('gun_holders', []))}",
+              end="", flush=True)
+
         # Display annotated frame
-        if result.get("annotated_frame"):
+        b64 = result.get("annotated_frame", "")
+        if b64:
             try:
-                img = _decode_b64_image(result["annotated_frame"])
-                cv2.imshow(f"Gun Detection - Camera {cam_id}", img)
-            except Exception as e:
-                print(f"\n⚠️  Display error: {e}")
-        
-        # Handle keyboard
+                arr = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
+                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    cv2.imshow(f"Gun Detection - Camera {cam_id}", img)
+            except Exception:
+                pass
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
-            print("\n\n⏹️  Stopped by user")
+            print("\n\nStopped by user")
             break
-        elif key == ord("s"):
-            print("\n")
-            stats = get_camera_stats(cam_id)
-            print(f"  📊 Stats: {stats}")
-    
+
+    wall_elapsed = time.perf_counter() - wall_start
     cap.release()
     cv2.destroyAllWindows()
-    
-    # Final summary
-    print("\n\n" + "="*70)
-    print("📊 TEST COMPLETE")
-    print("="*70)
-    
+
+    if not t_inference:
+        print("\nNo frames processed.")
+        return
+
+    # Exclude first frame (TRT cold-start) from stats
+    steady = t_inference[1:] if len(t_inference) > 1 else t_inference
+
+    TARGET_FPS = 15.0
+    achieved_fps = frame_count / wall_elapsed
+    med_fps      = 1000.0 / statistics.median(steady)
+    avg_fps      = 1000.0 / statistics.mean(steady)
+
+    print("\n\n" + "=" * 70)
+    print("  BENCHMARK REPORT")
+    print("=" * 70)
+    print(f"  Frames processed : {frame_count}  (frame 1 excluded from stats = TRT warmup)")
+    print(f"  Wall time        : {wall_elapsed:.2f}s")
+    print(f"  Source FPS       : {src_fps:.1f}")
+    print()
+    print(f"  {'Metric':<22} {'min':>7} {'avg':>7} {'med':>7} {'max':>7} {'p95':>7}")
+    print(f"  {'-'*57}")
+    p95 = sorted(steady)[int(len(steady) * 0.95)]
+    print(f"  {'inference (ms)':<22} "
+          f"{min(steady):>7.1f} "
+          f"{statistics.mean(steady):>7.1f} "
+          f"{statistics.median(steady):>7.1f} "
+          f"{max(steady):>7.1f} "
+          f"{p95:>7.1f}")
+    print()
+    print(f"  Wall-clock FPS   : {achieved_fps:6.2f}  (includes TRT warmup frame)")
+    print(f"  Steady-state avg : {avg_fps:6.2f}  fps")
+    print(f"  Steady-state med : {med_fps:6.2f}  fps")
+    print(f"  Target FPS       : {TARGET_FPS:.1f}")
+    print()
+
+    if med_fps >= TARGET_FPS:
+        print(f"  PASS -- {med_fps:.1f} fps median >= {TARGET_FPS} fps target")
+    else:
+        gap = TARGET_FPS - med_fps
+        print(f"  BELOW TARGET -- {med_fps:.1f} fps median (need {gap:.1f} more fps)")
+
+    print()
+    print(f"  Total alerts     : {total_alerts}")
     stats = get_camera_stats(cam_id)
-    print(f"Camera: {cam_id}")
-    print(f"Frames processed: {stats['total_frames']}")
-    print(f"Currently armed: {stats['armed_count']} persons")
-    print(f"Armed IDs: {stats['armed_ids']}")
-    print(f"Total alerts sent: {total_alerts}")
-    print("="*70)
-    
-    # Optional cleanup
+    print(f"  Armed IDs        : {stats.get('armed_ids', [])}")
+    print("=" * 70)
+
     cleanup_camera(cam_id)
-    print(f"\n✓ Camera {cam_id} cleaned up")
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
     # Test the inference function
-    VIDEO_PATH = r"E:\All_models\gun_detection\guntest1.mp4"
+    VIDEO_PATH = r"video6.mp4"
     
     print("\n🧪 TESTING MODE")
     print("This simulates how your websocket calls run_inference()\n")
